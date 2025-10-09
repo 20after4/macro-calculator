@@ -1,3 +1,7 @@
+# Copyright © 2025 by Mukunda Modell
+# You can use this code under the terms of the GNU GPL v3.0
+# see LICENSE.md
+
 from st77xx import St7789
 import lvgl as lv
 from lv_utils import event_loop
