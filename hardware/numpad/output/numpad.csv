@@ -1,0 +1,7 @@
+"Id";"Designator";"Footprint";"Quantity";"Designation";"Supplier and ref";
+1;"LCD-1";"2.25in LCD DISPLAY 284x76";1;"2.25in LCD";;;
+2;"key-m6,key-m5,key-2,key-del,key-divide,key-m3,key-m1,key-9,key-4,key-multiply,key-6,key-m4,key-m2,key-minus,key-8,key-5,key-m7,key-3,key-1,key-numlock,key-7";"SW_Cherry_MX_1.00u_PCB_HOTSWAP";21;"SW_Cherry_MX_1.00u_PCB_HOTSWAP";;;
+3;"D-m1,D-m2,D-m7,D-enter,D-m6,D-divide,D-m5,D-m4,D-7,D-m3,D-multiply,D-3,D-6,D-plus,D-8,D-1,D-9,D-del,D-numlock,D-2,D-4,D-5,D-minus,D-zero";"D_SOD-123";24;"D_SOD-123";;;
+4;"key-enter,key-plus";"SW_Cherry_MX_2.00u_Vertical_PCB";2;"SW_Cherry_MX_2.00u_Vertical_PCB";;;
+5;"RPI-PICO";"RaspberryPi_Pico_Common_THT";1;"RaspberryPi_Pico_Common_THT";;;
+6;"key-zero";"SW_Cherry_MX_2.00u_PCB";1;"SW_Cherry_MX_2.00u_PCB";;;
