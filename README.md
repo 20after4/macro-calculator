@@ -4,6 +4,9 @@ Custom Mechanical USB Keypad + Standalone Calculator written in MicroPython
 
 ## Hardware:
 
+
+![Illustration of the circuit board](pcb.png "PCB")
+
 * Custom 24 Key Matrix PCB
     * Supports hot-swapable MX-style key switches
     * Hand solderable (Difficulty: medium-high due to small surface mount diodes)
