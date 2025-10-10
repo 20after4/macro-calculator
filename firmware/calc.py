@@ -42,9 +42,9 @@ M2 = 0
 M3 = 0
 M4 = 0
 
-num_expr = "([0-9]*\.?[0-9]+|M[1-4])*"
-oper_expr = "[ ]*([\+\-\*\/])[ ]*"
-tok = re.compile(num_expr+oper_expr+num_expr)
+num_expr = "([M0-9\.]+)*"
+oper_expr = "([\+\-\*\/])?"
+tok = re.compile("^"+num_expr+oper_expr+num_expr+"(.*)")
 
 class KeypadInterface(HIDInterface):
     # Very basic synchronous USB keypad HID interface
@@ -105,15 +105,10 @@ _KEYPAD_REPORT_DESC = (
             b'\x91\x01'  # Output (Constant) - padding bits
     b'\xC0'  # End Collection
 )
-
-
-
-spi = SPI(0, baudrate=24_000_000, polarity=0, phase=0,
-    sck = Pin(2, Pin.OUT),
-    mosi = Pin(3, Pin.OUT))
-
+sckpin = Pin(2, Pin.OUT)
+mosipin = Pin(3, Pin.OUT)
+spi = SPI(0, baudrate=24000000, polarity=0, phase=0, sck=sckpin, mosi=mosipin)
 lcd = St7789(rot=1, res=(76,284), spi=spi, cs=5, dc=6, rst=7, factor=8, bgr=False)
-
 
 
 from array import array
@@ -147,6 +142,8 @@ class Calc:
     shifted = False
 
     operators = ('+', '-', '*', '/', '%', '^', '<', '>', '!')
+
+    saved_expr = None
 
     def show_err(self, err):
         self.error.set_text(err.value)
@@ -236,7 +233,11 @@ class Calc:
         if symbol is None and value is None:
             return
         else:
-            method = getattr(self, symbol, None)
+            if self.shifted and shifted is not None:
+                method = getattr(self, shifted, None)
+            else:
+                method = getattr(self, symbol, None)
+
             if method is not None:
                 method(keydown)
             elif keydown:
@@ -293,6 +294,13 @@ class Calc:
     def tokenize(self, text):
         return tok.match(text)
 
+    def RECALL(self, keydown):
+        if not keydown:
+            return
+        if self.saved_expr is not None:
+            self.current_line.set_text(self.saved_expr)
+            self.update_cursor()
+
     def ENTER(self, keydown):
         if not keydown:
             return
@@ -303,23 +311,31 @@ class Calc:
 
         try:
             orig_expr = self.current_line.get_text()
-            expr = self.tokenize(orig_expr)
+            self.saved_expr = orig_expr
             out = []
-            groups = None
-            if expr:
-                groups = expr.groups()
-            if not groups:
-                groups = [orig_expr]
-            for group in groups:
-                if group is None:
-                    continue
-                if group[0] not in ("+","/","*","-","M"):
-                    out.append('DecimalNumber("'+group+'")')
-                else:
-                    out.append(group)
+            while len(orig_expr) > 0:
+                groups = None
+                print("tokenize: ",orig_expr)
+                expr = tok.match(orig_expr)
+                print('done tokenizing')
+                if expr:
+                    groups = expr.groups()
+                    end = expr.end()
+                    orig_expr = orig_expr[end:]
+                if not groups:
+                    groups = [orig_expr]
+                    orig_expr = ""
+                for group in groups:
+                    if group is None or group == "":
+                        continue
+                    if group.isdigit():
+                        out.append('DecimalNumber("'+group+'")')
+                    else:
+                        out.append(group)
             expr = "".join(out)
             if (expr == "" or expr[0] in ("+","/","*","-")):
                 expr = "M1" + expr
+            print('eval:',str(expr))
             res = eval(str(expr))
             if type(res) is float:
                 res = DecimalNumber(str(res))
