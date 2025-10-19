@@ -17,6 +17,6 @@ def PeriodicInterrupt(timer):
             else:
                 cb(t[3])
             timeouts.remove(t)
-
+            break
 
 timer = Timer(period=1000, mode=Timer.PERIODIC, callback=PeriodicInterrupt)

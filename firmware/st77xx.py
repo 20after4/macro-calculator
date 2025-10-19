@@ -401,6 +401,7 @@ class St7789_hw(St77xx_hw):
             (ST77XX_MADCTL, bytes([ST77XX_MADCTL_ROTS[self.rot%4]])),
             # RGB565
             (ST77XX_COLMOD, bytes([ST77XX_COLOR_MODE_65K | ST77XX_COLOR_MODE_16BIT])),
+
             # front/back porch setting in normal/idle/partial modes; 3rd byte (PSEN) 0x00 = disabled
             (ST7789_PORCTRL, b"\x0C\x0C\x00\x33\x33"),
             # VGH=14.06V, VGL=-8.87V [Adafruit: 0x14]
@@ -421,6 +422,8 @@ class St7789_hw(St77xx_hw):
             (ST7789_NVGAMCTRL, b"\xD0\x02\x07\x0A\x0B\x18\x34\x43\x4A\x2B\x1B\x1C\x22\x1F"),
             # content adaptive brightness control and color enhancement: color enhancement on, high enhancement
             (ST7789_WRCACE, bytes([0b10110000])),
+            # Inverted color
+            (ST77XX_INVON, None, 10),
             # display on
             (ST77XX_DISPON, None, 100),
             ## FIXME: needs out of sleep mode AGAIN, otherwise will stay bleck the first time on?

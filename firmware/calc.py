@@ -2,38 +2,36 @@
 # You can use this code under the terms of the GNU GPL v3.0
 # see LICENSE.md
 
+import time
+import re
+import io
+import os
+import machine
+from sys import platform
+from machine import Pin, Signal, SPI
+from micropython import const
+from rp2_dma import DMA
 from st77xx import St7789
 import lvgl as lv
 from lv_utils import event_loop
-import machine
-from machine import Pin, Signal, SPI
-from rp2_dma import DMA
-from micropython import const
-import time
-import usb.device
-from usb.device.hid import HIDInterface
-from keymap import keys
+import bus
+from bus import led
 import keymap
+from keymap import keys, keyboard
+import style
+from style import Menu,HIDDEN
 from settimeout import setTimeout
 from decimal import DecimalNumber
-import re
+from usbkeypad import KeypadInterface
 
-blue = lv.color_hex(0x0000ff)
-red = lv.color_hex(0xff0000)
-white = lv.color_hex(0xffffff)
-black = lv.color_hex(0x000000)
-yellow = lv.color_hex(0xaacc00)
-green = lv.color_hex(0xff0000)
-HIDDEN = lv.obj.FLAG.HIDDEN
 
-led = Pin(25, Pin.OUT)
-
+DecimalNumber.set_scale(16)
 MAX_LINE_LEN = const(17)
-_INTERFACE_PROTOCOL_KEYBOARD = const(0x01)
+
 
 def numformat(num):
     if type(num) is DecimalNumber:
-        return num.to_string_max_length(16)
+        return num.to_string_max_length(17)
     else:
         return "{: 16.10g}".format(num)
 
@@ -43,147 +41,143 @@ M3 = 0
 M4 = 0
 
 num_expr = "([M0-9\.]+)*"
-oper_expr = "([\+\-\*\/])?"
+oper_expr = "([\+\-\*\/\=])?"
 tok = re.compile("^"+num_expr+oper_expr+num_expr+"(.*)")
 
-class KeypadInterface(HIDInterface):
-    # Very basic synchronous USB keypad HID interface
+def lvgl_keypad_read(kp, data):
+    scan = input_next()
+    if scan is not None:
 
-    def __init__(self):
-        super().__init__(
-            _KEYPAD_REPORT_DESC,
-            set_report_buf=bytearray(1),
-            protocol=_INTERFACE_PROTOCOL_KEYBOARD,
-            interface_str="CalcPad",
-        )
-        self.numlock = False
-        self.enabled = True
-        self.usb_initialized = False
+        key, value = scan
 
-    def initialize_usb(self):
-        if not self.usb_initialized:
-            usb.device.get().init(self, builtin_driver=True)
-            self.usb_initialized = True
-
-    def on_set_report(self, report_data, _report_id, _report_type):
-        report = report_data[0]
-        b = bool(report & 1)
-        if b != self.numlock:
-            print("Numlock: ", b)
-            self.numlock = b
-
-    def send_key(self, key=None):
-        if not (self.enabled and self.is_open()):
-            return
-        if key is None:
-            self.send_report(b"\x00")
+        if value:
+            data.state = lv.INDEV_STATE.PRESSED
         else:
-            self.send_report(key.to_bytes(1, "big"))
+            data.state = lv.INDEV_STATE.RELEASED
+        keycode = key[0]
+        res = key.update(value)
+        if res is not None:
+            return
+        if keyboard.layer==1:
+            if keycode == keymap.KP8:
+                data.key = lv.KEY.UP
+            elif keycode == keymap.KP2:
+                data.key = lv.KEY.DOWN
+            elif keycode == keymap.KP4:
+                data.key = lv.KEY.LEFT
+            elif keycode == keymap.KP6:
+                data.key = lv.KEY.RIGHT
+            elif keycode == keymap.F18:
+                data.key = lv.KEY.ESC
+            elif keycode == keymap.KP3:
+                data.key = lv.KEY.PREV
+            elif keycode == keymap.KP9:
+                data.key = lv.KEY.NEXT
+            elif keycode == keymap.KP7:
+                data.key = lv.KEY.HOME
+            elif keycode == keymap.KP1:
+                data.key = lv.KEY.END
+            else:
+                app.send_key(keycode, key, value)
+                data.state = lv.INDEV_STATE.RELEASED
+        else:
+            if keycode == keymap.ENTER:
+                data.key = lv.KEY.ENTER
+            elif keycode == keymap.F19:
+                data.key = lv.KEY.BACKSPACE
+            elif len(key[2]) == 1:
+                data.key = ord(key[2])
+            else:
+                #app.send_key(keycode, key, value)
+                data.state = lv.INDEV_STATE.RELEASED
+        print('LVGL key', data.state, data.key)
+    else:
+        data.state = lv.INDEV_STATE.RELEASED
 
 
 
-_KEYPAD_REPORT_DESC = (
-    b'\x05\x01'  # Usage Page (Generic Desktop)
-        b'\x09\x07'  # Usage (Keypad)
-    b'\xA1\x01'  # Collection (Application)
-        b'\x05\x07'  # Usage Page (Keypad)
-            b'\x19\x00'  # Usage Minimum (0)
-            b'\x29\xFF'  # Usage Maximum (ff)
-            b'\x15\x00'  # Logical Minimum (0)
-            b'\x25\xFF'  # Logical Maximum (ff)
-            b'\x95\x01'  # Report Count (1),
-            b'\x75\x08'  # Report Size (8),
-            b'\x81\x00'  # Input (Data, Array, Absolute)
-        b'\x05\x08'  # Usage page (LEDs)
-            b'\x19\x01'  # Usage Minimum (1)
-            b'\x29\x01'  # Usage Maximum (1),
-            b'\x95\x01'  # Report Count (1),
-            b'\x75\x01'  # Report Size (1),
-            b'\x91\x02'  # Output (Data, Variable, Absolute)
-            b'\x95\x01'  # Report Count (1),
-            b'\x75\x07'  # Report Size (7),
-            b'\x91\x01'  # Output (Constant) - padding bits
-    b'\xC0'  # End Collection
-)
-sckpin = Pin(2, Pin.OUT)
-mosipin = Pin(3, Pin.OUT)
-spi = SPI(0, baudrate=24000000, polarity=0, phase=0, sck=sckpin, mosi=mosipin)
-lcd = St7789(rot=1, res=(76,284), spi=spi, cs=5, dc=6, rst=7, factor=8, bgr=False)
-
-
-from array import array
-import time
+def lvgl_input():
+    kp = lv.indev_create()
+    kp.set_type(lv.INDEV_TYPE.KEYPAD)
+    kp.set_read_cb(lvgl_keypad_read)
+    return kp
 
 class Calc:
-
-    cols = [ Pin(9, Pin.OUT),
-            Pin(16, Pin.OUT),
-            Pin(17, Pin.OUT),
-            Pin(18, Pin.OUT),
-            Pin(19, Pin.OUT)
-    ]
-
-    rows = [
-            Pin(10, Pin.IN, Pin.PULL_DOWN),
-            Pin(11, Pin.IN, Pin.PULL_DOWN),
-            Pin(12, Pin.IN, Pin.PULL_DOWN),
-            Pin(13, Pin.IN, Pin.PULL_DOWN),
-            Pin(14, Pin.IN, Pin.PULL_DOWN),
-            Pin(15, Pin.IN, Pin.PULL_DOWN)
-    ]
-
-    callbacks = [
-        "home", "enter", "pgup",
-        "end", "up", "pgdn",
-        "left", "down", "right"
-    ]
-    state = array('b', [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0])
-
-    shifted = False
-
+    state = keymap.keyboard.state
     operators = ('+', '-', '*', '/', '%', '^', '<', '>', '!')
 
     saved_expr = None
 
     def show_err(self, err):
-        self.error.set_text(err.value)
-        self.error.set_text_selection_start(0)
-        self.error.set_text_selection_end(len(err.value))
-        self.error.remove_flag(HIDDEN)
-        setTimeout(6,self.hide_err)
+        self.show_msg(err.value, 8, style.red)
 
-    def hide_err(self):
-        self.error.add_flag(HIDDEN)
+    def show_msg(self, msg, timeout=5, color=None):
+        if color is None:
+            color = style.blue
+        self.msg.set_text(msg)
+        self.msg.set_style_text_color(color, lv.PART.MAIN)
+        self.msg.remove_flag(HIDDEN)
+        setTimeout(timeout, self.hide_msg)
+
+    def hide_msg(self):
+        self.msg.add_flag(HIDDEN)
 
     def __init__(self):
         self.NUMLOCK(True)
-
         self.scr = lv.obj()
-
+        self.scr.add_style(style.DEFAULT, lv.PART.MAIN)
+        self.panel = lv.obj(self.scr)
+        self.panel.add_style(style.DEFAULT, lv.PART.MAIN)
+        self.panel.add_flag(self.panel.FLAG.SCROLLABLE)
+        self.panel.add_flag(self.panel.FLAG.SCROLL_ON_FOCUS)
+        self.panel.set_scrollbar_mode(lv.SCROLLBAR_MODE.OFF)
+        self.panel.set_style_pad_all(0,0)
+        self.panel.set_size(284, 76)
+        self.panel.add_event_cb(self.focus_changed, lv.EVENT.FOCUSED, None)
+        self.grp = lv.group_create()
+        self.grp.set_default()
+        self.menu = Menu(self)
+        self.input = lvgl_input()
+        self.input.set_group(self.grp)
         self.mono_font = lv.font_unscii_16
-
+        self.small_font = lv.font_montserrat_14
         # create labels for our 4 lines of text:
-        self.lines = [ self.text_line(0,17),
-                      self.text_line(1,17),
-                      self.text_line(2,17),
-                      self.text_line(3,17)]
+        self.txt = self.textarea(3,17)
+
+        self.set_lines([
+            self.txt,
+            self.text_line(1,17),
+            self.text_line(2,17),
+            self.text_line(3,17),
+            self.text_line(4,17),
+            self.text_line(5,17)
+        ])
+
+        self.txt.add_event_cb(self.ENTER, lv.EVENT.READY, None)
 
         # And a label above the top line, to be shown when there is an input error.
-        self.error = self.text_line(0,10)
-        self.error.add_flag(HIDDEN)
-        self.error.set_style_text_align(lv.TEXT_ALIGN.LEFT, 0)
-        self.error.set_style_text_color(red, lv.PART.SELECTED)
-        self.index = 3
+        self.msg = self.text_line(0, 20, "", self.small_font, self.scr)
+        self.msg.add_flag(self.msg.FLAG.FLOATING)
+        self.msg.add_flag(HIDDEN)
+        self.msg.set_style_text_align(lv.TEXT_ALIGN.LEFT, 0)
+        self.msg.set_style_text_color(style.blue, lv.PART.SELECTED)
+        self.msg.set_style_bg_color(style.black, lv.PART.SELECTED)
+
+        self.index = 0
 
         # current_line is normally pointing to the last/bottom line of text
-        self.current_line = self.lines[self.index]
+        self.current_line = self.txt
         # we use lvgl selection and an empty space for a cursor - empty label can't have a selection
-        self.current_line.set_text(' ')
+        self.current_line.set_text('')
 
+        self.load_history()
 
         lv.screen_load(self.scr)
-        #self.grp = lv.group_create()
+
         self.k = KeypadInterface()
+
+        global keyboard
+        keyboard.app = self
 
         if (event_loop.is_running()):
             self.event_loop = event_loop.current_instance()
@@ -193,32 +187,125 @@ class Calc:
         self.event_loop.refresh_cb = scan_keys
 
 
-    def text_line(self, index, len=17, text=""):
+    def text_line(self, index, maxlen=17, text="", font=None, parent=None):
         """ Create a single label object to represent 1 line of text on the display. """
-        line = lv.label(self.scr)
-        line.set_style_text_font(self.mono_font, 0)
-        line.set_style_text_align(lv.TEXT_ALIGN.RIGHT, 0)
-        line.set_style_text_color(white, lv.PART.SELECTED)
-        line.set_style_bg_color(blue, lv.PART.SELECTED)
-        line.set_pos(0, 2 + (index * 17))
-        line.set_width(16*len)
+        if parent is None:
+            parent = self.panel
+        line = lv.label(parent)
+        if font == None:
+            line.set_style_text_font(self.mono_font, 0)
+        else:
+            line.set_style_text_font(font, 0)
+        style.set_style(line)
+
+        #line.set_pos(0, 2 + (index * 17))
+        line.set_size(lv.pct(100), lv.SIZE_CONTENT)
+        line.set_style_text_align(lv.TEXT_ALIGN.RIGHT, lv.PART.MAIN)
         line.set_text(text)
 
+        self.grp.add_obj(line)
+        line.scroll_to_view_recursive(False)
         return line
 
-    def clear(self, linenum):
-        if linenum == self.index:
-            M1 = 0
-            if self.current_line.get_text() == "":
-                linenum = linenum - 1
-                M2 = 0
-        elif linenum == 1:
-            M3 = 0
-        self.lines[linenum].set_text(" ")
-        self.lines[linenum].set_text_selection_start(0)
-        self.lines[linenum].set_text_selection_end(1)
+    def textarea(self, index, maxlen=17, text="", font=None):
+        """ Create a single textarea object to represent the editable line """
+        line = lv.textarea(self.panel)
+        if font == None:
+            line.set_style_text_font(self.mono_font, 0)
+        else:
+            line.set_style_text_font(font, 0)
+        line.set_one_line(True)
+        self.grp.add_obj(line)
+        line.set_height(18)
+        line.set_width(275)
+        line.set_max_length(maxlen)
+        style.set_style(line)
+        lbl = line.get_label()
+        lbl.set_style_pad_right(2, lv.PART.MAIN)
+        #line.add_style(style.text_selected, lv.PART.SELECTED)
+        #line.add_style(style.text_cursor, lv.PART.CURSOR | lv.STATE.FOCUSED)
 
-    def send_key(self, scancode=None, keycode=None, symbol=None, value=None, shifted=None, keydown=1):
+        #line.set_pos(0, 2 + (index * 17))
+        line.set_style_text_align(lv.TEXT_ALIGN.RIGHT, lv.PART.MAIN)
+        line.set_scrollbar_mode(lv.SCROLLBAR_MODE.OFF)
+        line.set_text(text)
+        line.set_cursor_pos(len(text))
+        line.add_state(lv.STATE.FOCUSED)
+        line.scroll_to_view_recursive(False)
+        return line
+
+
+    def focus_changed(self, e):
+        target = e.get_target_obj()
+        print(target)
+        print(target.get_text())
+
+        y = target.get_y()
+        sy = self.panel.get_scroll_y()
+
+        print(f"{y}, {sy}, {y-sy}, {sy-y}")
+        #self.panel.scroll_by(0, diff, 0)
+
+    def set_lines(self, lines):
+        self.lines = lines
+        prev = None
+        i=0
+        for line in reversed(lines):
+            line.set_pos(0,i*17)
+            i += 1
+
+
+    def load_history(self):
+        try:
+            os.stat('history.txt')
+        except Exception as e:
+            return
+        f = io.open('history.txt')
+        try:
+            lines = []
+            val = f.readline()
+            while val != '':
+                val = val.rstrip()
+                lines.append(val)
+                if len(lines) > 4:
+                    lines.pop(0)
+                val = f.readline()
+
+            for i in range(3, 0, -1):
+                self.set_line(i-1, lines.pop())
+
+        except Exception as e:
+            print(e)
+        finally:
+            f.close()
+
+
+    def set_line(self, linenum, value):
+        self.lines[linenum].set_text(str(value))
+        if (value == ""):
+            num = DecimalNumber(0)
+        else:
+            num = DecimalNumber(value)
+        if linenum == 1:
+            M1 = num
+        elif linenum == 2:
+            M2 = num
+        elif linenum == 3:
+            M3 = num
+        elif linenum == 4:
+            M4 = num
+
+    def clear(self, linenum):
+        self.set_line(linenum, 0)
+
+
+    def send_key(self, scancode, key, keydown=1):
+        keycode, symbol, value = key[0:3]
+        if len(key) > 3:
+            shifted = key[3]
+        else:
+            shifted = None
+
         if keycode == keymap.NUMLOCK:
             if keydown == 1:
                 self.NUMLOCK()
@@ -233,7 +320,7 @@ class Calc:
         if symbol is None and value is None:
             return
         else:
-            if self.shifted and shifted is not None:
+            if keyboard.layer==1 and shifted is not None:
                 method = getattr(self, shifted, None)
             else:
                 method = getattr(self, symbol, None)
@@ -241,7 +328,7 @@ class Calc:
             if method is not None:
                 method(keydown)
             elif keydown:
-                if self.shifted and shifted is not None:
+                if keyboard.layer==1 and shifted is not None:
                     self.insert_text(shifted)
                 else:
                     self.insert_text(value)
@@ -255,26 +342,26 @@ class Calc:
             return
         if pos == lv.LABEL_POS_LAST:
             pos = current_length
-        current_symbol = current_text[-1:]
+
+        is_operator = value in self.operators
 
         if (current_text == " " or
-            (current_symbol in self.operators and value in self.operators)
+            (is_operator and current_text[-1:] in self.operators)
         ):
+            # replace the operator at the end of line with a new operator
             current_text = current_text[0:-1] + value
             current.set_text(current_text)
+        elif is_operator and current_text[0:1] in self.operators:
+            # replace the operator at the start of line with a new operator
+            current_text = value + current_text[1:]
+            current.set_text(current_text)
         else:
-            current.ins_text(pos, value)
-            self.update_cursor(current)
+            current.add_text(value)
+
 
 
     def update_cursor(self, current_line=None):
-        if current_line is None:
-            current_line = self.current_line
-        line_length = len(current_line.get_text())
-        if line_length < 1:
-            return
-        current_line.set_text_selection_start(line_length-1);
-        current_line.set_text_selection_end(line_length);
+        pass
 
 
     def NUMLOCK(self, value=None):
@@ -291,9 +378,6 @@ class Calc:
     def HOME(self):
         self.send_key(HOME)
 
-    def tokenize(self, text):
-        return tok.match(text)
-
     def RECALL(self, keydown):
         if not keydown:
             return
@@ -304,15 +388,18 @@ class Calc:
     def ENTER(self, keydown):
         if not keydown:
             return
-        if self.shifted:
+        if keyboard.layer == 1:
             self.insert_text("=")
+            return
+
         global M1, M2, M3, M4
-        lines = len(self.lines)
 
         try:
-            orig_expr = self.current_line.get_text()
-            self.saved_expr = orig_expr
+            orig_expr = self.txt.get_text().strip()
+            if orig_expr == "":
+                return
             out = []
+            saved_expr = orig_expr
             while len(orig_expr) > 0:
                 groups = None
                 print("tokenize: ",orig_expr)
@@ -332,8 +419,14 @@ class Calc:
                         out.append('DecimalNumber("'+group+'")')
                     else:
                         out.append(group)
+
+            assign = None
+            if len(out) > 1 and out[1] == '=' and (out[0] == 'M3' or out[0] == 'M4'):
+                assign = out[0]
+                out = out[2:]
+
             expr = "".join(out)
-            if (expr == "" or expr[0] in ("+","/","*","-")):
+            if (expr[0] in ("+","/","*","-")):
                 expr = "M1" + expr
             print('eval:',str(expr))
             res = eval(str(expr))
@@ -341,26 +434,97 @@ class Calc:
                 res = DecimalNumber(str(res))
             elif type(res) is not DecimalNumber:
                 res = DecimalNumber(res)
-            M4 = M3
-            M3 = M2
+            if assign == 'M3':
+                M3 = res
+            elif assign == 'M4':
+                M4 = res
+
             M2 = M1
             M1 = res
-            self.hide_err()
-            self.lines[lines-4].set_text(numformat(M3))
-            self.lines[lines-3].set_text(numformat(M2))
-            self.lines[lines-2].set_text(numformat(res))
-            self.clear(self.index)
+            self.hide_msg()
+
+            for i in range(len(self.lines)-1, 0, -1):
+                if i > 1:
+                    txt = self.lines[i-1].get_text()
+                elif i == 1:
+                    txt = numformat(res)
+                self.lines[i].set_text(txt)
+
+            self.txt.set_text("")
+            self.saved_expr = saved_expr
+            f = open('history.txt', 'a')
+            try:
+                f.write(numformat(res)+"\n")
+            finally:
+                f.close()
+
         except Exception as e:
             self.show_err(e)
 
         #self.send_key(keymap.ENTER)
 
+    def F13(self, keydown):
+        self.menu_key(keydown, 0)
+    def F14(self, keydown):
+        self.menu_key(keydown, 1)
+    def F15(self, keydown):
+        self.menu_key(keydown, 2)
+    def F16(self, keydown):
+        self.menu_key(keydown, 3)
+
+    def action(self, key, action, symbol):
+        method = getattr(self, symbol, None)
+        if method is not None:
+            method(key, action)
+        else:
+            print('Unmatched key', key, symbol)
+
+    def STORE(self, key, action):
+        global M1, M2, M3, M4
+        if action == keymap.LONGPRESS:
+            if key.symbol == "M3":
+                M3 = M1
+                self.show_msg('stored')
+            elif key.symbol == "M4":
+                M4 = M1
+                self.show_msg('stored')
+
+    def menu_key(self, keydown, index):
+
+        if keydown and keyboard.layer==1:
+            print('show menu', index)
+            self.menu.show(index)
+        else:
+            page = self.menu.active_page()
+            self.menu.hide()
+            if page is not None and keydown:
+                item = page.get_child(index)
+                print('selected item', item.get_text())
+            else:
+                if keydown:
+                    pass
+                else:
+                    self.insert_text('M')
+                    self.insert_text(str(index+1))
+
     def F17(self, keydown):
         self.shifted = keydown
+        # if (self.shifted):
+        #     lv.screen_load(self.menu.obj)
+        # else:
+        #     lv.screen_load(self.scr)
+
 
     def F18(self, keydown):
         if keydown:
-            self.clear(self.index)
+            if keyboard.layer==1:
+                self.clear(3)
+                self.clear(2)
+                self.clear(1)
+                self.clear(0)
+                os.unlink('history.txt')
+            else:
+                self.clear(self.index)
 
     def F19(self, keydown):
         if keydown:
@@ -374,11 +538,19 @@ class Calc:
         self.send_key(keymap.PGUP)
 
 
+input_buffer = []
+def input_next():
+    if len(input_buffer) > 0:
+        return input_buffer.pop(0)
+    return None
+
+
 def scan_keys():
-    cols = Calc.cols
-    rows = Calc.rows
-    callbacks = Calc.callbacks
-    state = Calc.state
+    cols = keymap.cols
+    rows = keymap.rows
+    state = keymap.keyboard.state
+
+    is_pico2 = platform == "rp2"
 
     for c in range(len(cols)):
         # turn on one column at a time
@@ -393,15 +565,17 @@ def scan_keys():
             # These next 3 lines are not needed for the rp2040.
             # Hopefully future hardware revisions will fix this, unfortunately, The RPI Pico 2
             # boards that I have tested definitely need this workaround:
-            rows[r].init(mode=Pin.OUT, pull=None, value=0)
-            time.sleep_us(10)
-            rows[r].init(mode=Pin.IN, pull=Pin.PULL_DOWN)
+            if is_pico2:
+                rows[r].init(mode=Pin.OUT, pull=None, value=0)
+                time.sleep_us(10)
+                rows[r].init(mode=Pin.IN, pull=Pin.PULL_DOWN)
+                time.sleep_us(10)
             # end Errata workaround
 
 
             # read the value from the row's GPIO pin
+
             value = rows[r].value()
-            time.sleep_us(10)
 
             # the state array tracks which keys were pressed the last time we scanned the matrix.
             if state[scancode] != value:
@@ -413,18 +587,19 @@ def scan_keys():
                 print(scancode, key, value)
                 if (key is not None):
                     try:
-                        if len(key) > 3: # some keys have a shifted alternate key code
-                            shifted_key = key[3]
-                        else:
-                            shifted_key = None
+                        input_buffer.append((key, value))
 
                         # key behavior is defined in the app class, just pass the raw data to app.send_key
-                        app.send_key(scancode, key[0], key[1], key[2], shifted_key, value)
+                        # if app.shifted and shifted_key == None and key[0] != keymap.F17:
+                        #     input_buffer.append((scancode, key, value))
+                        # else:
+                        #    app.send_key(scancode, key[0], key[1], key[2], shifted_key, value)
+
                     except Exception as e:
                         print(e)
+
                 # record the state of each key
                 state[scancode] = value
 
         # turn off this column and move on to the next
         cols[c].off()
-
