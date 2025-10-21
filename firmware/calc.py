@@ -1,6 +1,7 @@
 # Copyright © 2025 by Mukunda Modell
 # You can use this code under the terms of the GNU GPL v3.0
 # see LICENSE.md
+# https://git.sr.ht/~twentyafterfour/macro-calculator
 
 import time
 import re
@@ -23,7 +24,7 @@ from style import Menu,HIDDEN
 from settimeout import setTimeout
 from decimal import DecimalNumber
 from usbkeypad import KeypadInterface
-
+from history import History
 
 DecimalNumber.set_scale(16)
 MAX_LINE_LEN = const(17)
@@ -102,6 +103,9 @@ def lvgl_input():
     kp.set_read_cb(lvgl_keypad_read)
     return kp
 
+
+
+
 class Calc:
     state = keymap.keyboard.state
     operators = ('+', '-', '*', '/', '%', '^', '<', '>', '!')
@@ -149,9 +153,9 @@ class Calc:
             self.text_line(1,17),
             self.text_line(2,17),
             self.text_line(3,17),
-            self.text_line(4,17),
-            self.text_line(5,17)
         ])
+
+        self.history = History(10, self.lines[1:])
 
         self.txt.add_event_cb(self.ENTER, lv.EVENT.READY, None)
 
@@ -204,7 +208,6 @@ class Calc:
         line.set_text(text)
 
         self.grp.add_obj(line)
-        line.scroll_to_view_recursive(False)
         return line
 
     def textarea(self, index, maxlen=17, text="", font=None):
@@ -257,10 +260,10 @@ class Calc:
 
     def load_history(self):
         try:
-            os.stat('history.txt')
+            os.stat('/data/history.txt')
         except Exception as e:
             return
-        f = io.open('history.txt')
+        f = io.open('/data/history.txt', mode="r")
         try:
             lines = []
             val = f.readline()
@@ -273,7 +276,11 @@ class Calc:
 
             for i in range(3, 0, -1):
                 self.set_line(i-1, lines.pop())
-
+            f.seek(0)
+            f.write("\n")
+            f.flush()
+            f.close()
+            os.unlink('/data/history.txt')
         except Exception as e:
             print(e)
         finally:
@@ -439,24 +446,15 @@ class Calc:
             elif assign == 'M4':
                 M4 = res
 
+            self.history.append(numformat(res))
+
             M2 = M1
             M1 = res
             self.hide_msg()
 
-            for i in range(len(self.lines)-1, 0, -1):
-                if i > 1:
-                    txt = self.lines[i-1].get_text()
-                elif i == 1:
-                    txt = numformat(res)
-                self.lines[i].set_text(txt)
-
             self.txt.set_text("")
             self.saved_expr = saved_expr
-            f = open('history.txt', 'a')
-            try:
-                f.write(numformat(res)+"\n")
-            finally:
-                f.close()
+
 
         except Exception as e:
             self.show_err(e)
@@ -518,11 +516,8 @@ class Calc:
     def F18(self, keydown):
         if keydown:
             if keyboard.layer==1:
-                self.clear(3)
-                self.clear(2)
-                self.clear(1)
                 self.clear(0)
-                os.unlink('history.txt')
+                self.history.clear()
             else:
                 self.clear(self.index)
 
