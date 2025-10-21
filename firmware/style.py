@@ -57,6 +57,7 @@ text_focused.set_border_side(lv.BORDER_SIDE.BOTTOM)
 
 
 def set_style(widget):
+    """apply some default styles and flags to a widget"""
     widget.add_flag(widget.FLAG.SCROLL_ON_FOCUS)
     widget.add_flag(widget.FLAG.EVENT_BUBBLE)
     widget.add_style(DEFAULT, lv.PART.MAIN)

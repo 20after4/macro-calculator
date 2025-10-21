@@ -208,7 +208,7 @@ keys = [
   #row 1
   ShiftKey(F17, 'F17', "SHIFT", 1),        # 0
   Key(KP0, 'KP0', "0"),            # 1
-  None,                         # 2 Not connected
+  None,                            # 2 Not connected
   Key(PERIOD, 'PERIOD', '.'),      # 3
   Key(ENTER, 'ENTER', "\n", "="),  # 4
   # row 2
@@ -216,27 +216,27 @@ keys = [
   Key(KP1, "KP1", "1"),            # 6
   Key(KP2, "KP2", "2"),            # 7
   Key(KP3, "KP3", "3"),            # 8
-  None,                         # 9 Not connected
+  None,                            # 9 Not connected
   # row 3
   Key(F19, "F19", "BACKSPACE", "RECALL"), # 10
   Key(KP4, "KP4", "4"),            # 11
   Key(KP5, "KP5", "5"),            # 12
   Key(KP6, "KP6", "6"),            # 13
-  None,                         # 14 Not connected
+  None,                            # 14 Not connected
   # row 4
-  None,                         # 15 Not connected
+  None,                            # 15 Not connected
   Key(KP7, "KP7", "7"),            # 16
   Key(KP8, "KP8", "8"),            # 17
   Key(KP9, "KP9", "9"),            # 18
   Key(ADD, "ADD", "+"),            # 19
   #row 5
-  None,                         # 20 Not connected
+  None,                            # 20 Not connected
   ToggleKey(NUMLOCK, "NUMLOCK", "NumLock"),# 21
   Key(DIVIDE, "DIVIDE", "/"),        # 22
   Key(MULTIPLY, "MULTIPLY", "*"),    # 23
   Key(SUBTRACT, "SUBTRACT", "-"),    # 24
   # row 6:
-  None,                           # 25 Not connected
+  None,                              # 25 Not connected
   Key(F13, "F13", "M1"),             # 26
   Key(F14, "F14", "M2"),             # 27
   LongPressKey(F15, "F15", "M3", "STORE"),             # 28

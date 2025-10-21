@@ -1,5 +1,8 @@
 from st77xx import St7789
 from machine import Pin, Signal, SPI
+
+# configuration of harddware pins and drivers
+
 sckpin = Pin(2, Pin.OUT)
 mosipin = Pin(3, Pin.OUT)
 spi = SPI(0, baudrate=24000000, polarity=0, phase=0, sck=sckpin, mosi=mosipin)

@@ -1,6 +1,9 @@
 from machine import Timer
 import time
 
+# Fire and forget scheduling of callbacks,
+# something sort of like setTimeout from JavaScript.
+
 timeouts = []
 def setTimeout(seconds, callback, arg=None):
     timeouts.append((time.ticks_ms(), seconds*1000, callback, arg))
