@@ -1,7 +1,7 @@
 from machine import Pin
 from array import array
 import time
-from settimeout import setTimeout
+from settimeout import setTimeout, cancelTimeout
 # This keypad has a contiguous series of keys (KEYPAD_KEY_IDS) starting at 0x4A:
 _KEYPAD_KEY_OFFS = const(0x4A)
 
@@ -83,6 +83,7 @@ class KeyboardState:
   state = array('b', [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0])
   layer = 0
   instance = None
+  NumLock = False
 
   def __init__(self):
     self.app = None
@@ -97,6 +98,7 @@ class KeyboardState:
   def action(self, key, action, symbol=None):
     if symbol is None:
       symbol = key.symbol
+
     if self.app is not None:
       self.app.action(key, action, symbol)
 
@@ -106,7 +108,7 @@ keyboard = KeyboardState.singleton()
 class Key:
   lower_key = None
 
-  def __init__(self, scancode, name, symbol, shifted=None):
+  def __init__(self, scancode, name, symbol, shifted=None, layers=None ):
     global keyboard
     self.keyboard = keyboard
     self.scancode = scancode
@@ -114,8 +116,17 @@ class Key:
     self.symbol = symbol
     self.shifted = shifted
     self.keydown=0
-    self.press_cb = None
-    self.release_cb = None
+    self.layers = []
+    if layers is not None:
+      self.add_layers(layers)
+
+
+  def add_layers(self, layers):
+    if isinstance(layers, list):
+      self.layers.extend(layers)
+    else:
+      self.layers.append(layers)
+
 
   def set_lower(self, key):
     self.lower_key = key
@@ -123,22 +134,35 @@ class Key:
   def update(self, keydown):
     if self.keydown != keydown:
       self.keydown = keydown
+
+      res = False
       if keydown == 0:
-        self.on_release()
+        for action in self.layers:
+          res = action.on_release()
+          if res:
+            return res
+        if not res:
+          res = self.on_release()
+        if (not res) and self.lower_key is not None:
+          res = self.lower_key.on_release()
       else:
-        self.on_press()
+        for action in self.layers:
+          res = action.on_press()
+          if res:
+            return res
+        if not res:
+          res = self.on_press()
+        if (not res) and self.lower_key is not None:
+          res = self.lower_key.on_press()
+      return res
+    else:
+      return True
 
   def on_press(self):
-    if self.press_cb is not None:
-      self.press_cb()
-    elif self.lower_key is not None:
-      self.lower_key.on_press()
+    return False
 
   def on_release(self):
-    if self.release_cb is not None:
-      self.release_cb()
-    elif self.lower_key is not None:
-      self.lower_key.on_release()
+    return False
 
   def __getitem__(self, index):
     if index==0:
@@ -165,54 +189,153 @@ class Key:
   def __repr__(self):
     return f"Key({self.scancode}, {self.name}, {self.symbol})"
 
+  def get_symbol(self):
+    if keyboard.layer == 1 and self.shifted:
+      return self.shifted
+    else:
+      return self.symbol
+
 class ShiftKey(Key):
 
-  def __init__(self, scancode, name, symbol, layer=1):
+  def __init__(self, scancode, name, symbol, layer_shift=1):
     super().__init__(scancode, name, symbol)
-    self.layer = layer
+    self.layer_shift = layer_shift
 
   def on_press(self):
-    self.keyboard.layer += self.layer
+    self.keyboard.layer += self.layer_shift
+    return True
 
   def on_release(self):
-    self.keyboard.layer -= self.layer
+    self.keyboard.layer -= self.layer_shift
+    return True
 
 class ToggleKey(Key):
   def __init__(self, scancode, name, symbol):
+    self.state = False
     super().__init__(scancode, name, symbol)
 
   def get_state(self):
     return self.state
 
-  def on_release(self):
+  def on_press(self):
     self.state = not self.state
-    setattr(self.keyboard, self.name, self.state)
+    setattr(self.keyboard, self.symbol, self.state)
+    return True
 
 class LongPressKey(Key):
-  def __init__(self, scancode, name, symbol, long_press_sym):
-    super().__init__(scancode, name, symbol)
+
+  def __init__(self, scancode, name, symbol, long_press_sym, layers=None):
+    super().__init__(scancode, name, symbol, layers=layers)
     self.long_press_sym = long_press_sym
+    self.cancel_longpress = False
+    self.tid = None
 
   def on_press(self):
     def callback():
+      self.tid = None
       if self.keydown:
         keyboard.action(self, LONGPRESS, self.long_press_sym)
-    keyboard.action(self, PRESS, self.symbol)
-    setTimeout(1, callback)
+
+    self.tid = setTimeout(1, callback)
 
   def on_release(self):
+    if self.tid is not None:
+      cancelTimeout(self.tid)
+      keyboard.action(self, PRESS, self.symbol)
+      self.tid = None
     keyboard.action(self, RELEASE)
+
+
+class Action:
+  layer = 0
+  def __init__(self, layer):
+    self.layer = layer
+
+  def on_press(self):
+    return False
+
+  def on_release(self):
+    return False
+
+class TwoLayerAction(Action):
+  def __init__(self, main_callback, shifted_callback):
+    self.callbacks = (main_callback, shifted_callback)
+    super().__init__(1)
+
+  def on_press(self):
+    layer = keyboard.layer
+    if layer < 2:
+      cb = self.callbacks[layer]
+      if callable(cb):
+        return cb()
+      else:
+        print("Invalid callback: ",self,"callback=", cb)
+        return True
+    else:
+      print("Unmatched layer:", layer)
+      return False
+
+  def on_release(self):
+    return True
+
+
+class MenuAction(Action):
+  def __init__(self, layer, menu_index):
+    self.menu_index = menu_index
+    self.handled = False
+    super().__init__(layer)
+
+  def on_press(self):
+    menu = keyboard.app.menu
+    page = menu.active_page()
+    if page is not None:
+      item = page.get_child(self.menu_index)
+      print("menu item selected:",item.get_text())
+      self.handled = True
+      menu.hide()
+      return True
+    else:
+      if keyboard.layer < self.layer:
+        return False
+      menu.show(self.menu_index)
+      self.handled = True
+      return True
+
+  def on_release(self):
+    if self.handled == True:
+      self.handled = False
+      return True
+    return self.layer <= keyboard.layer
+
+menu0 = MenuAction(1, 0)
+menu1 = MenuAction(1, 1)
+menu2 = MenuAction(1, 2)
+menu3 = MenuAction(1, 3)
+
+def CLEAR():
+  keyboard.app.clear()
+  return True
+
+def CLEAR_ALL():
+  keyboard.app.clear()
+  keyboard.app.history.clear()
+  return True
+
+def BACKSPACE():
+  keyboard.app.BACKSPACE()
+
 
 # Key metadata.  see ../docs/keymap.md for some notes about key mapping.
 keys = [
   #row 1
-  ShiftKey(F17, 'F17', "SHIFT", 1),        # 0
+  #       scancode, name, symbol
+  ShiftKey(F17, 'F17', "SHIFT", layer_shift=1),        # 0
   Key(KP0, 'KP0', "0"),            # 1
   None,                            # 2 Not connected
   Key(PERIOD, 'PERIOD', '.'),      # 3
   Key(ENTER, 'ENTER', "\n", "="),  # 4
   # row 2
-  Key(F18, 'F18', "CLEAR"),        # 5
+  Key(F18, 'F18', "CLEAR", layers=TwoLayerAction(CLEAR, CLEAR_ALL)),        # 5
   Key(KP1, "KP1", "1"),            # 6
   Key(KP2, "KP2", "2"),            # 7
   Key(KP3, "KP3", "3"),            # 8
@@ -232,15 +355,15 @@ keys = [
   #row 5
   None,                            # 20 Not connected
   ToggleKey(NUMLOCK, "NUMLOCK", "NumLock"),# 21
-  Key(DIVIDE, "DIVIDE", "/"),        # 22
+  Key(DIVIDE,   "DIVIDE", "/"),        # 22
   Key(MULTIPLY, "MULTIPLY", "*"),    # 23
   Key(SUBTRACT, "SUBTRACT", "-"),    # 24
   # row 6:
   None,                              # 25 Not connected
-  Key(F13, "F13", "M1"),             # 26
-  Key(F14, "F14", "M2"),             # 27
-  LongPressKey(F15, "F15", "M3", "STORE"),             # 28
-  LongPressKey(F16, "F16", "M4", "STORE"),             # 29
+  Key(F13,          "F13", "M1", None, menu0),# 26
+  Key(F14,          "F14", "M2", None, menu1),# 27
+  LongPressKey(F15, "F15", "M3", "STORE", menu2), # 28
+  LongPressKey(F16, "F16", "M4", "STORE", menu3), # 29
 ]
 
 def lookup_key(keyid, field=0):

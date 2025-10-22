@@ -1,5 +1,7 @@
 import lvgl as lv
 
+from lv_colors import lv_colors as color
+
 # colors
 blue = lv.color_hex(0x0099ff)
 red = lv.color_hex(0xff0000)
@@ -9,9 +11,8 @@ yellow = lv.color_hex(0xFFFF00)
 green = lv.color_hex(0xff0000)
 grey = lv.color_hex(0x303a40)
 lightblue = lv.color_hex(0x77aaff)
-HIDDEN = lv.obj.FLAG.HIDDEN
 
-
+HIDDEN = const(1)
 
 # default styles
 s = lv.style_t()
@@ -67,10 +68,10 @@ def set_style(widget):
 
 # menus
 menu_pages = (
-    ('a1','b','c','d'),
-    ('a2','b','c','d'),
-    ('a3','b','c','d'),
-    ('a4','b','c','d'),
+    ('a1','b1','c1','d1'),
+    ('a2','b2','c2','d2'),
+    ('a3','b3','c3','d3'),
+    ('a4','b4','c4','d4'),
 )
 
 class Menu:
@@ -91,7 +92,7 @@ class Menu:
         return page
 
     def active_page(self):
-        if self.index:
+        if self.index is not None:
             return self.pages[self.index]
         else:
             return None
